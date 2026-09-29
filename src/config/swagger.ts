@@ -1,6 +1,4 @@
-import swaggerUi from 'swagger-ui-express';
 import { Express } from 'express';
-import { env } from './env';
 
 export const swaggerSpec = {
   openapi: '3.0.3',
@@ -21,10 +19,11 @@ Production REST API for Kuldeep Sen (Full Stack / MERN Developer & AI Automation
       url: 'https://kuldeepsen.com'
     }
   },
+  // Relative URL: works on localhost as well as on Vercel
   servers: [
     {
-      url: `http://localhost:${env.PORT}`,
-      description: 'Local / Current Server'
+      url: '/',
+      description: 'Current Server'
     }
   ],
   components: {
@@ -771,16 +770,58 @@ Production REST API for Kuldeep Sen (Full Stack / MERN Developer & AI Automation
   }
 };
 
-export const setupSwagger = (app: Express): void => {
-  app.use(
-    '/api/docs',
-    swaggerUi.serve,
-    swaggerUi.setup(swaggerSpec, {
-      customSiteTitle: 'Kuldeep Sen Portfolio API Documentation',
-      customCss: '.swagger-ui .topbar { display: none }',
-      swaggerOptions: {
+const SWAGGER_UI_VERSION = '5.17.14';
+const SWAGGER_CDN = `https://cdn.jsdelivr.net/npm/swagger-ui-dist@${SWAGGER_UI_VERSION}`;
+
+const swaggerHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kuldeep Sen Portfolio API Documentation</title>
+  <link rel="stylesheet" href="${SWAGGER_CDN}/swagger-ui.css" />
+  <style>.swagger-ui .topbar { display: none }</style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="${SWAGGER_CDN}/swagger-ui-bundle.js"></script>
+  <script>
+    window.onload = function () {
+      window.ui = SwaggerUIBundle({
+        url: '/api/docs.json',
+        dom_id: '#swagger-ui',
         persistAuthorization: true
-      }
-    })
-  );
+      });
+    };
+  </script>
+</body>
+</html>`;
+
+/**
+ * Serverless-friendly Swagger setup.
+ * swagger-ui-express serves static assets from node_modules/swagger-ui-dist,
+ * which Vercel does not bundle into the function. So we load the UI assets
+ * from a CDN and only serve the HTML page + raw OpenAPI JSON ourselves.
+ *
+ * NOTE: call setupSwagger(app) AFTER helmet() so the CSP override below wins.
+ */
+export const setupSwagger = (app: Express): void => {
+  // Raw OpenAPI spec
+  app.get('/api/docs.json', (_req, res) => {
+    res.json(swaggerSpec);
+  });
+
+  // Swagger UI page
+  app.get(['/api/docs', '/api/docs/'], (_req, res) => {
+    // Helmet's default CSP blocks CDN scripts/styles, so override for this route only
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; " +
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
+        "img-src 'self' data: https:; " +
+        "connect-src 'self'"
+    );
+    res.type('html').send(swaggerHtml);
+  });
 };
