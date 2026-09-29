@@ -2,23 +2,47 @@ import mongoose from 'mongoose';
 import { env } from './env';
 import { logger } from './logger';
 
+let connectionPromise: Promise<typeof mongoose> | null = null;
+
 export const connectDatabase = async (): Promise<typeof mongoose> => {
-  try {
-    const conn = await mongoose.connect(env.MONGODB_URI, {
+  // Already connected
+  if (mongoose.connection.readyState === 1) {
+    return mongoose;
+  }
+
+  // Connection already in progress
+  if (connectionPromise) {
+    return connectionPromise;
+  }
+
+  connectionPromise = mongoose
+    .connect(env.MONGODB_URI, {
       autoIndex: env.NODE_ENV !== 'production'
+    })
+    .then((conn) => {
+      logger.info(
+        `✅ MongoDB connected successfully to: ${conn.connection.host}/${conn.connection.name}`
+      );
+
+      return conn;
+    })
+    .catch((error) => {
+      logger.error('❌ MongoDB connection error:', error);
+
+      // Allow the next invocation to retry
+      connectionPromise = null;
+
+      throw error;
     });
 
-    logger.info(`✅ MongoDB connected successfully to: ${conn.connection.host}/${conn.connection.name}`);
-    return conn;
-  } catch (error) {
-    logger.error('❌ MongoDB connection error:', error);
-    process.exit(1);
-  }
+  return connectionPromise;
 };
 
 export const disconnectDatabase = async (): Promise<void> => {
   try {
     await mongoose.connection.close();
+    connectionPromise = null;
+
     logger.info('MongoDB connection closed.');
   } catch (error) {
     logger.error('Error during MongoDB disconnection:', error);
@@ -32,10 +56,10 @@ export const getDatabaseStatus = (): string => {
     2: 'connecting',
     3: 'disconnecting'
   };
+
   return states[mongoose.connection.readyState] || 'unknown';
 };
 
-// Event listeners
 mongoose.connection.on('disconnected', () => {
   logger.warn('⚠️ MongoDB disconnected.');
 });
